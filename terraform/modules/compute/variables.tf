@@ -51,3 +51,21 @@ variable "container_image" {
   type        = string
   default     = "nginx:stable"
 }
+
+variable "min_capacity" {
+  description = "Minimum number of ECS tasks"
+  type        = number
+  default     = 2
+}
+
+variable "max_capacity" {
+  description = "Maximum number of ECS tasks"
+  type        = number
+  default     = 6
+}
+
+variable "cpu_target_value" {
+  description = "Target average CPU utilization percentage"
+  type        = number
+  default     = 70
+}
