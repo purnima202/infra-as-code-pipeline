@@ -12,3 +12,7 @@ crash.*.log
 
 # Keep Terraform dependency lock file tracked
 !**/.terraform.lock.hcl
+
+# Track non-secret Terraform environment configurations
+!terraform/environments/
+!terraform/environments/**
