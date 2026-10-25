@@ -236,3 +236,71 @@ jobs:
             -auto-approve \
             -var-file="environments/dev/dev.tfvars" \
             -var="container_image=$IMAGE_URI"
+
+  
+  terraform-deploy-staging:
+    name: Deploy Staging to ECS
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/devops'
+    needs: [ecr-push, terraform-plan-staging]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init
+
+      - name: Select staging workspace
+        run: terraform -chdir=terraform workspace select staging
+
+      - name: Deploy Staging
+        env:
+          IMAGE_URI: ${{ needs.ecr-push.outputs.image_uri }}
+        run: |
+          terraform -chdir=terraform apply \
+            -auto-approve \
+            -var-file="environments/staging/staging.tfvars" \
+            -var="container_image=$IMAGE_URI"
+
+  terraform-deploy-prod:
+    name: Deploy Production to ECS
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/devops'
+    needs: [ecr-push, terraform-plan-prod, terraform-deploy-staging]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init
+
+      - name: Select production workspace
+        run: terraform -chdir=terraform workspace select prod
+
+      - name: Deploy Production
+        env:
+          IMAGE_URI: ${{ needs.ecr-push.outputs.image_uri }}
+        run: |
+          terraform -chdir=terraform apply \
+            -auto-approve \
+            -var-file="environments/prod/prod.tfvars" \
+            -var="container_image=$IMAGE_URI"
