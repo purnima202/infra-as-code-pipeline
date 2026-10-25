@@ -55,12 +55,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-            - name: Debug GitHub OIDC context
+      - name: Debug GitHub OIDC context
         env:
           GH_REPOSITORY: ${{ github.repository }}
           GH_REF: ${{ github.ref }}
           GH_EVENT: ${{ github.event_name }}
-          GH_ACTOR: ${{ github.actor }}
+          GH_ACTOR: ${{ github.actor }} 
         run: |
           echo "Repository: $GH_REPOSITORY"
           echo "Ref: $GH_REF"
