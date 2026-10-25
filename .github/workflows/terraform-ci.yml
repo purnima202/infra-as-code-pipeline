@@ -119,8 +119,7 @@ jobs:
           IMAGE_URI: ${{ needs.ecr-push.outputs.image_uri }}
         run: |
           terraform -chdir=terraform plan \
-            -var="aws_region=us-east-1" \
-            -var="project_name=infra-as-code-pipeline" \
+            -var-file="environments/dev/dev.tfvars" \
             -var="container_image=$IMAGE_URI"
 
   
@@ -199,3 +198,41 @@ jobs:
             -var="project_name=infra-as-code-pipeline" \
             -var="container_image=$IMAGE_URI" \
             -var-file="environments/prod/prod.tfvars"
+  
+  terraform-deploy-dev:
+    name: Deploy Dev to ECS
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/devops'
+    needs: [ecr-push, terraform-plan-dev]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Initialize Terraform
+        run: terraform -chdir=terraform init
+
+      - name: Select dev workspace
+        run: terraform -chdir=terraform workspace select dev
+
+      - name: Deploy Dev
+        env:
+          IMAGE_URI: ${{ needs.ecr-push.outputs.image_uri }}
+        run: |
+          terraform -chdir=terraform apply \
+            -auto-approve \
+            -var-file="environments/dev/dev.tfvars" \
+            -var="container_image=$IMAGE_URI"
