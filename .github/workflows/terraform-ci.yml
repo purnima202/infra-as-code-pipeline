@@ -30,3 +30,15 @@ jobs:
 
       - name: Validate Terraform
         run: terraform -chdir=terraform validate
+
+  
+  docker-build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build application image
+        run: docker build -t infra-as-code-pipeline:${{ github.sha }} ./app
