@@ -1,5 +1,5 @@
 
-name: Terraform CI
+name: Terraform CI-CD
 
 on:
   pull_request:
@@ -9,6 +9,9 @@ on:
     branches:
       - main
       - feature/devops
+
+permissions:
+  contents: read
 
 jobs:
   terraform-check:
@@ -22,16 +25,15 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Check Terraform formatting
+      - name: Terraform Format
         run: terraform fmt -check -recursive terraform/
 
-      - name: Initialize Terraform
+      - name: Terraform Init
         run: terraform -chdir=terraform init -backend=false
 
-      - name: Validate Terraform
+      - name: Terraform Validate
         run: terraform -chdir=terraform validate
 
-  
   docker-build:
     name: Build Docker Image
     runs-on: ubuntu-latest
@@ -42,11 +44,51 @@ jobs:
 
       - name: Build application image
         run: docker build -t infra-as-code-pipeline:${{ github.sha }} ./app
-  
-  
+
   ecr-push:
-    name: Push Docker Image to Amazon ECR
+    name: Push Image to Amazon ECR
+    if: github.event_name == 'push'
+    needs: [terraform-check, docker-build]
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      image_uri: ${{ steps.image.outputs.image_uri }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: infra-as-code-pipeline
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" ./app
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+  terraform-plan-dev:
+    name: Terraform Plan - Dev
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/devops'
+    needs: ecr-push
+    runs-on: ubuntu-latest
+
     permissions:
       contents: read
       id-token: write
@@ -55,56 +97,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Debug GitHub OIDC context
-        env:
-          GH_REPOSITORY: ${{ github.repository }}
-          GH_REF: ${{ github.ref }}
-          GH_EVENT: ${{ github.event_name }}
-          GH_ACTOR: ${{ github.actor }} 
-        run: |
-          echo "Repository: $GH_REPOSITORY"
-          echo "Ref: $GH_REF"
-          echo "Event: $GH_EVENT"
-          echo "Actor: $GH_ACTOR"
-      
-      - name: Debug OIDC claims
-        run: |
-          python - <<'PY'
-          import os, json, urllib.request, base64
-          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=sts.amazonaws.com"
-          req = urllib.request.Request(
-              url,
-              headers={"Authorization": "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]}
-          )
-          with urllib.request.urlopen(req) as response:
-              token = json.load(response)["value"]
-          payload = token.split(".")[1]
-          payload += "=" * (-len(payload) % 4)
-          claims = json.loads(base64.urlsafe_b64decode(payload))
-          print("Audience:", claims.get("aud"))
-          print("Subject:", claims.get("sub"))
-          print("Issuer:", claims.get("iss"))
-          PY
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Verify AWS identity
-        run: aws sts get-caller-identity
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-      
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Initialize Terraform backend
+        run: terraform -chdir=terraform init
 
-      - name: Build, tag, and push image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: infra-as-code-pipeline
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Select dev workspace
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./app
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          terraform -chdir=terraform workspace select dev || \
+          terraform -chdir=terraform workspace new dev
+
+      - name: Terraform Plan
+        env:
+          IMAGE_URI: ${{ needs.ecr-push.outputs.image_uri }}
+        run: |
+          terraform -chdir=terraform plan \
+            -var="aws_region=us-east-1" \
+            -var="project_name=infra-as-code-pipeline" \
+            -var="container_image=$IMAGE_URI"
